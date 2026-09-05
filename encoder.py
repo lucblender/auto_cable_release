@@ -59,13 +59,13 @@ class Encoder:
         if transition:
             self.step += transition
             if self.step >= 4:
-                self.position += 1
-                self.step = 0
-                self.events.append(self.EVENT_ENCODER_INCR)
-            elif self.step <= -4:
                 self.position -= 1
                 self.step = 0
                 self.events.append(self.EVENT_ENCODER_DECR)
+            elif self.step <= -4:
+                self.position += 1
+                self.step = 0
+                self.events.append(self.EVENT_ENCODER_INCR)
         else:
             self.step = 0
 

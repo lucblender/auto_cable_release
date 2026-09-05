@@ -30,6 +30,9 @@ class ServoMotorDriver:
         self.pwm.duty_u16(self.deg_to_duty(angle))
         return self.angle
 
+    def release_motor(self):
+        self.pwm.duty_u16(0)
+
     def sweep(self, start=None, end=None, delay=0.5):
         if start is None:
             start = self.min_angle

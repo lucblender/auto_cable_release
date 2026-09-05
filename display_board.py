@@ -263,6 +263,18 @@ class BatteryMonitor:
         raw = self.adc.read_u16()
         return (raw / 65535.0) * self.reference_voltage * self.v_divider
 
+    def read_percentage(self):
+        voltage = self.read_voltage()
+        min_voltage = 3.0
+        max_voltage = 4.2
+
+        if voltage <= min_voltage:
+            return 0
+        if voltage >= max_voltage:
+            return 100
+
+        return int((voltage - min_voltage) * 100 / (max_voltage - min_voltage))
+
 
 class RP2040DisplaySystem:
     def __init__(self):
@@ -270,22 +282,36 @@ class RP2040DisplaySystem:
         self.imu = QMI8658()
         self.battery = BatteryMonitor()
 
+    def display_battery_level(self, percent=None):
+        if percent is None:
+            percent = self.battery.read_percentage()
+        self.lcd.text("BAT {}%".format(percent), 95, 220, 0x0000)
+
     def _show_state_text(self, text):
         self.lcd.fill(self.lcd.white)
         self.lcd.text(text, 30, 110, 0x0000)
+        self.display_battery_level()
         self.lcd.show()
 
     def gui_init(self):
         self._show_state_text("Init")
 
-    def gui_wait_for_trigger(self):
-        self._show_state_text("WaitForTrigger")
+    def gui_wait_for_trigger(self, timer_label="00:00:01"):
+        self.lcd.fill(self.lcd.white)
+        self.lcd.text("WaitForTrigger", 15, 40, 0x0000)
+        self.lcd.text(timer_label, 45, 110, 0x0000)
+        self.display_battery_level()
+        self.lcd.show()
 
     def gui_trigger(self):
         self._show_state_text("Trigger")
 
-    def gui_wait_for_release(self):
-        self._show_state_text("WaitForRelease")
+    def gui_wait_for_release(self, timer_label="00:00:00"):
+        self.lcd.fill(self.lcd.white)
+        self.lcd.text("WaitForRelease", 15, 40, 0x0000)
+        self.lcd.text(timer_label, 45, 110, 0x0000)
+        self.display_battery_level()
+        self.lcd.show()
 
     def gui_release(self):
         self._show_state_text("Release")
@@ -324,8 +350,9 @@ class RP2040DisplaySystem:
             "GYR_Z={:+3.2f}".format(imu_values[5]), 125, 177, self.lcd.white)
 
         self.lcd.fill_rect(0, 200, 240, 40, 0x180f)
-        self.lcd.text("VBAT={:.2f}V".format(
-            battery_voltage), 80, 215, self.lcd.white)
+        self.lcd.text("VBAT={:.2f}V".format(battery_voltage), 80, 210, self.lcd.white)
+        self.lcd.text("BAT={:3d}%".format(self.battery.read_percentage()),
+                      95, 225, self.lcd.white)
         self.lcd.show()
 
 
