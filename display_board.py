@@ -1,6 +1,10 @@
 from machine import Pin, I2C, SPI, PWM, ADC
 import framebuf
 import time
+import gc
+from array import array
+from micropython import const
+import writer
 
 
 I2C_SDA = 6
@@ -14,12 +18,31 @@ RST = 12
 BL = 25
 VBAT_PIN = 29
 
+LX_LOGO = const("helixbyte_r5g6b5.bin")
+
+
+def rgb888_to_rgb565(R: int, G: int, B: int):  # Convert RGB888 to RGB565
+    return const((((G & 0b00011100) << 3) + ((B & 0b11111000) >> 3) << 8) + (R & 0b11111000)+((G & 0b11100000) >> 5))
+
+
+def pict_to_fbuff(path, x, y):
+    with open(path, 'rb') as f:
+        data = bytearray(f.read())
+    return framebuf.FrameBuffer(data, x, y, framebuf.RGB565)
 
 class LCD_1inch28(framebuf.FrameBuffer):
     def __init__(self, cs_pin=CS, dc_pin=DC, rst_pin=RST, sck_pin=SCK,
-                 mosi_pin=MOSI, bl_pin=BL, spi_id=1):
+                 mosi_pin=MOSI, bl_pin=BL, spi_id=1, version=None):
         self.width = 240
         self.height = 240
+
+        self.blue = const(0x07E0)
+        self.green = const(0x001f)
+        self.red = const(0xf800)
+        self.white = const(0xffff)
+        self.black = const(0x0000)
+        self.grey = rgb888_to_rgb565(85, 85, 85)
+        self.light_grey = rgb888_to_rgb565(120, 120, 120)
 
         self.cs = Pin(cs_pin, Pin.OUT)
         self.dc = Pin(dc_pin, Pin.OUT)
@@ -45,6 +68,37 @@ class LCD_1inch28(framebuf.FrameBuffer):
         self.init_display()
         self.fill(self.white)
         self.show()
+
+        self.display_lxb_logo(version)
+
+        gc.collect()
+        import font.freesans20 as freesans20
+        import font.font6 as font6
+        self.font_writer_freesans20 = writer.Writer(self, freesans20)
+        self.font_writer_font6 = writer.Writer(self, font6)
+        gc.collect()
+
+
+
+    def display_lxb_logo(self, version=None):
+        # lxb_fbuf = zlib_pict_to_fbuff("helixbyte.z",89,120)
+        gc.collect()
+
+
+        width = 100
+        heigth = 74
+        lxb_fbuf = pict_to_fbuff(LX_LOGO, heigth, width)
+
+        self.blit(lxb_fbuf, 120-(heigth//2), 120-(width//2))
+        self.show()
+        time.sleep(1.5)
+        if version is not None:
+            txt_len = 54  # can't use stinglen since we use default font to not use memory cause we loaded lxb logo
+            self.text(version, 120-(txt_len//2), 200, self.grey)
+            self.show()
+
+        time.sleep(1)
+        gc.collect()
 
     def write_cmd(self, cmd):
         self.cs(1)
@@ -286,10 +340,12 @@ class BatteryMonitor:
 
 
 class RP2040DisplaySystem:
-    def __init__(self):
-        self.lcd = LCD_1inch28()
+    def __init__(self, version=None):
+        self.lcd = LCD_1inch28(version = version)
         self.imu = QMI8658()
         self.battery = BatteryMonitor()
+
+        self.lcd_timer_padding_x = None
 
     def display_battery_level(self, percent=None, charging_flag=None,
                               usb_plugged=None):
@@ -299,38 +355,104 @@ class RP2040DisplaySystem:
             charging_flag = self.battery.read_charging_state()
         if usb_plugged is None:
             usb_plugged = self.battery.read_usb_plugged()
-        self.lcd.text("BAT {}%, {}, {}".format(percent, charging_flag,
-                                               usb_plugged),
-                      58, 220, 0x0000)
+
+        battery_x = 90
+        battery_y = 206
+        battery_w = 50
+        battery_h = 24
+        terminal_w = 5
+        inner_w = battery_w - 4
+        inner_h = battery_h - 4
+
+        if usb_plugged and charging_flag:
+            shown_percent = 100
+            fill_ratio = 1.0
+            fill_color = self.lcd.green
+        elif usb_plugged:
+            shown_percent = min(percent, 99)
+            fill_ratio = max(0.0, min(1.0, shown_percent / 100.0))
+            fill_color = self.lcd.green
+        else:
+            shown_percent = max(0, min(100, percent))
+            fill_ratio = max(0.0, min(1.0, shown_percent / 100.0))
+            fill_color = self.lcd.grey
+
+        fill_w = int(inner_w * fill_ratio)
+
+        self.lcd.rect(battery_x, battery_y, battery_w, battery_h, self.lcd.white)
+        self.lcd.rect(battery_x + battery_w, battery_y + 7,
+                      terminal_w, battery_h - 14, self.lcd.white)
+        self.lcd.vline(battery_x + battery_w - 1, battery_y + 8,
+                       battery_h - 16, self.lcd.black)
+        self.lcd.vline(battery_x + battery_w , battery_y + 8,
+                       battery_h - 16, self.lcd.black)
+        self.lcd.fill_rect(battery_x + 2, battery_y + 2,
+                           inner_w, inner_h, self.lcd.black)
+        if fill_w > 0:
+            self.lcd.fill_rect(battery_x + 2, battery_y + 2,
+                               fill_w, inner_h, fill_color)
+
+        if usb_plugged and not charging_flag:
+            bolt_x = battery_x + 38
+            bolt_y = battery_y + 3
+            self.lcd.poly(bolt_x, bolt_y, array(
+                "h", [7, 0, 3, 7, 8, 7, 2, 16, 6, 9, 1, 9]), self.lcd.white, True)
+
+        shown_text = str(shown_percent)
+        text_x = 98 if shown_percent >= 100 else 106
+        self.lcd.font_writer_freesans20.text(shown_text, text_x, 208,
+                                             self.lcd.white)
 
     def _show_state_text(self, text):
-        self.lcd.fill(self.lcd.white)
-        self.lcd.text(text, 30, 110, 0x0000)
+        self.lcd.fill(self.lcd.black)
+        self.lcd.font_writer_freesans20.text(text, 30, 110, self.lcd.white)
         self.display_battery_level()
         self.lcd.show()
 
     def gui_init(self):
-        self._show_state_text("Init")
+        self.lcd.fill(self.lcd.black)
+        txt = "Place the Cable Release"
+        text_width = self.lcd.font_writer_freesans20.stringlen(txt)
+        text_x = (self.lcd.width - text_width) // 2
+        self.lcd.font_writer_freesans20.text(txt, text_x, 110, self.lcd.white)
+        self.display_battery_level()
+        self.lcd.show()
 
     def gui_wait_for_trigger(self, timer_label="00:00:01"):
-        self.lcd.fill(self.lcd.white)
-        self.lcd.text("WaitForTrigger", 15, 40, 0x0000)
-        self.lcd.text(timer_label, 45, 110, 0x0000)
+        self.lcd.fill(self.lcd.black)
+
+        if self.lcd_timer_padding_x is None:
+            text_width = self.lcd.font_writer_freesans20.stringlen(timer_label)
+            self.lcd_timer_padding_x = (self.lcd.width - text_width) // 2
+
+        txt = "Select Trigger Time"
+        text_width = self.lcd.font_writer_freesans20.stringlen(txt)
+        text_x = (self.lcd.width - text_width) // 2
+        self.lcd.font_writer_freesans20.text(txt, text_x, 40, self.lcd.white)
+        self.lcd.font_writer_freesans20.text(timer_label, self.lcd_timer_padding_x, 110, self.lcd.white)
         self.display_battery_level()
         self.lcd.show()
 
     def gui_trigger(self):
-        self._show_state_text("Trigger")
+        pass
 
     def gui_wait_for_release(self, timer_label="00:00:00"):
-        self.lcd.fill(self.lcd.white)
-        self.lcd.text("WaitForRelease", 15, 40, 0x0000)
-        self.lcd.text(timer_label, 45, 110, 0x0000)
+        self.lcd.fill(self.lcd.black)
+
+        if self.lcd_timer_padding_x is None:
+            text_width = self.lcd.font_writer_freesans20.stringlen(timer_label)
+            self.lcd_timer_padding_x = (self.lcd.width - text_width) // 2
+
+        txt = "Wait For Release"
+        text_width = self.lcd.font_writer_freesans20.stringlen(txt)
+        text_x = (self.lcd.width - text_width) // 2
+        self.lcd.font_writer_freesans20.text(txt, text_x, 40, self.lcd.white)
+        self.lcd.font_writer_freesans20.text(timer_label, self.lcd_timer_padding_x, 80, 110, self.lcd.white)
         self.display_battery_level()
         self.lcd.show()
 
     def gui_release(self):
-        self._show_state_text("Release")
+        pass
 
     def update_screen(self, encoder_position, imu_values=None,
                       battery_voltage=None, button_pressed=False):

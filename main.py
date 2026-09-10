@@ -15,9 +15,8 @@ class RobotController:
     def __init__(self):
         self.encoder = Encoder(a_pin=1, b_pin=2)
         self.servo = ServoMotorDriver(pin_id=0)
-        self.display = RP2040DisplaySystem()
+        self.display = RP2040DisplaySystem("v0.0.1")
 
-        self.display.lcd.set_bl_pwm(65535)
         self.servo.set_angle(90)
         time.sleep_ms(200)
         self.servo.release_motor()
