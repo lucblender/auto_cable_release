@@ -254,8 +254,11 @@ class QMI8658:
 
 
 class BatteryMonitor:
-    def __init__(self, adc_pin=VBAT_PIN, v_divider=2.0, reference_voltage=3.3):
+    def __init__(self, adc_pin=VBAT_PIN, charger_pin=16, usb_vsys_pin=17,
+                 v_divider=2.0, reference_voltage=3.3):
         self.adc = ADC(Pin(adc_pin))
+        self.charger_state_pin = Pin(charger_pin, Pin.IN, Pin.PULL_UP)
+        self.usb_vsys_pin = Pin(usb_vsys_pin, Pin.IN, Pin.PULL_DOWN)
         self.v_divider = v_divider
         self.reference_voltage = reference_voltage
 
@@ -275,6 +278,12 @@ class BatteryMonitor:
 
         return int((voltage - min_voltage) * 100 / (max_voltage - min_voltage))
 
+    def read_charging_state(self):
+        return 1 if self.charger_state_pin.value() else 0
+
+    def read_usb_plugged(self):
+        return 1 if self.usb_vsys_pin.value() else 0
+
 
 class RP2040DisplaySystem:
     def __init__(self):
@@ -282,10 +291,17 @@ class RP2040DisplaySystem:
         self.imu = QMI8658()
         self.battery = BatteryMonitor()
 
-    def display_battery_level(self, percent=None):
+    def display_battery_level(self, percent=None, charging_flag=None,
+                              usb_plugged=None):
         if percent is None:
             percent = self.battery.read_percentage()
-        self.lcd.text("BAT {}%".format(percent), 95, 220, 0x0000)
+        if charging_flag is None:
+            charging_flag = self.battery.read_charging_state()
+        if usb_plugged is None:
+            usb_plugged = self.battery.read_usb_plugged()
+        self.lcd.text("BAT {}%, {}, {}".format(percent, charging_flag,
+                                               usb_plugged),
+                      58, 220, 0x0000)
 
     def _show_state_text(self, text):
         self.lcd.fill(self.lcd.white)
@@ -351,8 +367,13 @@ class RP2040DisplaySystem:
 
         self.lcd.fill_rect(0, 200, 240, 40, 0x180f)
         self.lcd.text("VBAT={:.2f}V".format(battery_voltage), 80, 210, self.lcd.white)
-        self.lcd.text("BAT={:3d}%".format(self.battery.read_percentage()),
-                      95, 225, self.lcd.white)
+        battery_percent = self.battery.read_percentage()
+        charging_flag = self.battery.read_charging_state()
+        usb_plugged = self.battery.read_usb_plugged()
+        self.lcd.text("BAT={:3d}%, {}, {}".format(battery_percent,
+                               charging_flag,
+                               usb_plugged),
+              50, 225, self.lcd.white)
         self.lcd.show()
 
 

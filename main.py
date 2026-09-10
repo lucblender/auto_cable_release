@@ -26,6 +26,8 @@ class RobotController:
         self.state_started_ms = time.ticks_ms()
         self.wait_release_seconds = 1
         self.last_release_display_seconds = None
+        self.last_trigger_battery_percent = None
+        self.last_trigger_battery_poll_ms = 0
         self.set_state(STATE_INIT)
 
     def _format_hhmmss(self, total_seconds):
@@ -75,6 +77,21 @@ class RobotController:
             self.display.gui_wait_for_release(
                 self._format_hhmmss(remaining_seconds))
 
+    def _refresh_wait_for_trigger_display(self):
+        self.display.gui_wait_for_trigger(
+            self._format_hhmmss(self.wait_release_seconds))
+
+    def _poll_wait_for_trigger_battery(self):
+        now_ms = time.ticks_ms()
+        if time.ticks_diff(now_ms, self.last_trigger_battery_poll_ms) < 1000:
+            return
+
+        self.last_trigger_battery_poll_ms = now_ms
+        percent = self.display.battery.read_percentage()
+        if percent != self.last_trigger_battery_percent:
+            self.last_trigger_battery_percent = percent
+            self._refresh_wait_for_trigger_display()
+
     def set_state(self, new_state):
         self.state = new_state
         self.state_started_ms = time.ticks_ms()
@@ -85,8 +102,9 @@ class RobotController:
             self.servo.set_angle(50)
             time.sleep_ms(200)
             self.servo.release_motor()
-            self.display.gui_wait_for_trigger(
-                self._format_hhmmss(self.wait_release_seconds))
+            self.last_trigger_battery_percent = self.display.battery.read_percentage()
+            self.last_trigger_battery_poll_ms = time.ticks_ms()
+            self._refresh_wait_for_trigger_display()
         elif new_state == STATE_TRIGGER:
             self.servo.set_angle(180)
             self.display.gui_trigger()
@@ -110,14 +128,14 @@ class RobotController:
             return
 
         if self.state == STATE_WAIT_FOR_TRIGGER:
+            self._poll_wait_for_trigger_battery()
+
             if event == Encoder.EVENT_ENCODER_INCR:
                 self._step_wait_release_seconds(1)
-                self.display.gui_wait_for_trigger(
-                    self._format_hhmmss(self.wait_release_seconds))
+                self._refresh_wait_for_trigger_display()
             elif event == Encoder.EVENT_ENCODER_DECR:
                 self._step_wait_release_seconds(-1)
-                self.display.gui_wait_for_trigger(
-                    self._format_hhmmss(self.wait_release_seconds))
+                self._refresh_wait_for_trigger_display()
             elif event == Encoder.EVENT_BUTTON_PRESS:
                 self.set_state(STATE_TRIGGER)
             return
