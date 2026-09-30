@@ -10,6 +10,10 @@ STATE_TRIGGER = 2
 STATE_WAIT_FOR_RELEASE = 3
 STATE_RELEASE = 4
 
+# with the kiev 88 and my trigger mechanism, I had 300 ms of delay due to
+# the cable release and servo motor action
+KIEV88_MECHANICAL_TIME_DELAY = 300
+
 
 class RobotController:
     def __init__(self):
@@ -156,7 +160,7 @@ class RobotController:
 
         if self.state == STATE_WAIT_FOR_RELEASE:
             self._refresh_wait_for_release_display()
-            if time.ticks_diff(time.ticks_ms(), self.state_started_ms) >= (self.wait_release_seconds * 1000):
+            if (time.ticks_diff(time.ticks_ms(), self.state_started_ms)+KIEV88_MECHANICAL_TIME_DELAY) >= (self.wait_release_seconds * 1000):
                 self.set_state(STATE_RELEASE)
             return
 
