@@ -26,6 +26,8 @@ class RobotController:
         self.wait_release_seconds = 1
         self.last_release_display_seconds = None
         self.last_trigger_battery_percent = None
+        self.last_trigger_charging_flag = None
+        self.last_trigger_usb_plugged = None
         self.last_trigger_battery_poll_ms = 0
         self.set_state(STATE_INIT)
 
@@ -87,8 +89,15 @@ class RobotController:
 
         self.last_trigger_battery_poll_ms = now_ms
         percent = self.display.battery.read_percentage()
-        if percent != self.last_trigger_battery_percent:
+        charging_flag = self.display.battery.read_charging_state()
+        usb_plugged = self.display.battery.read_usb_plugged()
+
+        if (percent != self.last_trigger_battery_percent
+                or charging_flag != self.last_trigger_charging_flag
+                or usb_plugged != self.last_trigger_usb_plugged):
             self.last_trigger_battery_percent = percent
+            self.last_trigger_charging_flag = charging_flag
+            self.last_trigger_usb_plugged = usb_plugged
             self._refresh_wait_for_trigger_display()
 
     def set_state(self, new_state):
@@ -102,6 +111,8 @@ class RobotController:
             time.sleep_ms(200)
             self.servo.release_motor()
             self.last_trigger_battery_percent = self.display.battery.read_percentage()
+            self.last_trigger_charging_flag = self.display.battery.read_charging_state()
+            self.last_trigger_usb_plugged = self.display.battery.read_usb_plugged()
             self.last_trigger_battery_poll_ms = time.ticks_ms()
             self._refresh_wait_for_trigger_display()
         elif new_state == STATE_TRIGGER:

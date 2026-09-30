@@ -315,13 +315,13 @@ class BatteryMonitor:
         self.usb_vsys_pin = Pin(usb_vsys_pin, Pin.IN, Pin.PULL_DOWN)
         self.v_divider = v_divider
         self.reference_voltage = reference_voltage
+        self._adc_samples = 8
+        self._charge_step_interval_ms = 60000
+        self._display_percentage = None
+        self._last_charge_ramp_ms = time.ticks_ms()
+        self._was_charging = False
 
-    def read_voltage(self):
-        raw = self.adc.read_u16()
-        return (raw / 65535.0) * self.reference_voltage * self.v_divider
-
-    def read_percentage(self):
-        voltage = self.read_voltage()
+    def _voltage_to_percentage(self, voltage):
         min_voltage = 3.0
         max_voltage = 4.2
 
@@ -329,8 +329,48 @@ class BatteryMonitor:
             return 0
         if voltage >= max_voltage:
             return 100
-
         return int((voltage - min_voltage) * 100 / (max_voltage - min_voltage))
+
+    def read_voltage(self):
+        total = 0
+        for _ in range(self._adc_samples):
+            total += self.adc.read_u16()
+        raw = total / self._adc_samples
+        return (raw / 65535.0) * self.reference_voltage * self.v_divider
+
+    def read_percentage(self):
+        measured_percent = self._voltage_to_percentage(self.read_voltage())
+        usb_plugged = bool(self.read_usb_plugged())
+        charging_active = usb_plugged and (not bool(self.read_charging_state()))
+
+        if self._display_percentage is None:
+            self._display_percentage = measured_percent
+
+        if charging_active:
+            target_percent = min(99, measured_percent)
+            now_ms = time.ticks_ms()
+
+            if not self._was_charging:
+                self._last_charge_ramp_ms = now_ms
+
+            if target_percent > self._display_percentage:
+                elapsed_ms = time.ticks_diff(now_ms, self._last_charge_ramp_ms)
+                if elapsed_ms >= self._charge_step_interval_ms:
+                    step_count = elapsed_ms // self._charge_step_interval_ms
+                    increase = min(step_count, target_percent - self._display_percentage)
+                    self._display_percentage += increase
+                    self._last_charge_ramp_ms = time.ticks_add(
+                        self._last_charge_ramp_ms,
+                        increase * self._charge_step_interval_ms,
+                    )
+        else:
+            # Outside active charging, displayed SOC never moves upward.
+            if measured_percent < self._display_percentage:
+                self._display_percentage = measured_percent
+            self._last_charge_ramp_ms = time.ticks_ms()
+
+        self._was_charging = charging_active
+        return self._display_percentage
 
     def read_charging_state(self):
         return 1 if self.charger_state_pin.value() else 0
@@ -355,6 +395,7 @@ class RP2040DisplaySystem:
             charging_flag = self.battery.read_charging_state()
         if usb_plugged is None:
             usb_plugged = self.battery.read_usb_plugged()
+        charging_active = bool(usb_plugged) and (not bool(charging_flag))
 
         battery_x = 90
         battery_y = 206
@@ -364,12 +405,12 @@ class RP2040DisplaySystem:
         inner_w = battery_w - 4
         inner_h = battery_h - 4
 
-        if usb_plugged and charging_flag:
-            shown_percent = 100
-            fill_ratio = 1.0
+        if charging_active:
+            shown_percent = min(percent, 99)
+            fill_ratio = max(0.0, min(1.0, shown_percent / 100.0))
             fill_color = self.lcd.green
         elif usb_plugged:
-            shown_percent = min(percent, 99)
+            shown_percent = max(0, min(100, percent))
             fill_ratio = max(0.0, min(1.0, shown_percent / 100.0))
             fill_color = self.lcd.green
         else:
@@ -392,7 +433,7 @@ class RP2040DisplaySystem:
             self.lcd.fill_rect(battery_x + 2, battery_y + 2,
                                fill_w, inner_h, fill_color)
 
-        if usb_plugged and not charging_flag:
+        if charging_active:
             bolt_x = battery_x + 38
             bolt_y = battery_y + 3
             self.lcd.poly(bolt_x, bolt_y, array(
@@ -447,7 +488,7 @@ class RP2040DisplaySystem:
         text_width = self.lcd.font_writer_freesans20.stringlen(txt)
         text_x = (self.lcd.width - text_width) // 2
         self.lcd.font_writer_freesans20.text(txt, text_x, 40, self.lcd.white)
-        self.lcd.font_writer_freesans20.text(timer_label, self.lcd_timer_padding_x, 80, 110, self.lcd.white)
+        self.lcd.font_writer_freesans20.text(timer_label, self.lcd_timer_padding_x, 110, self.lcd.white)
         self.display_battery_level()
         self.lcd.show()
 
